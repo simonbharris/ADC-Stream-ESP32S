@@ -1,6 +1,7 @@
 import argparse, time, os
 import websocket
 import pandas as pd
+import random
 from struct import *
 
 try:
@@ -22,7 +23,7 @@ CHANNELS = ['ch1', 'ch2']
 CH_DATA = {ch: [] for ch in CHANNELS}
 NB_CHANNELS = len(CH_DATA.keys())
 
-LABELS = ["OneFinger", "TwoFinger"]
+LABELS = ["OneFinger", "TwoFinger", "fourFinger"]
 LABEL_COUNT = {label:0 for label in LABELS}
 NB_LABELS = len(LABELS)
 
@@ -34,8 +35,8 @@ def collectData(message):
     # i tracks the start position for the set of channels.
     # x tracks which channel we are reading from.
     for i in range(0, len(message), NB_CHANNELS * 2):
-        for x in range(NB_CHANNELS):                            # 'i'th set, 'x'th channel
-            CH_DATA['ch{}'.format(x + 1)].append(unpack("h", message[i+(x*2):i+(x*2)+2])[0])
+        for x in range(NB_CHANNELS):                            # 'i'th set, 'x'th channel * LSB Microvolt value
+            CH_DATA['ch{}'.format(x + 1)].append(round(unpack("h", message[i+(x*2):i+(x*2)+2])[0] * 7.8125, 2))
 
 # What to do when we receive a frame.
 def on_message(ws, message):
@@ -61,10 +62,7 @@ def on_message(ws, message):
         print("Produced csv no: {} lable: {}".format(file_iter + 1, label))
         LABEL_COUNT[label] += 1
         file_iter += 1
-        if label_iter == NB_LABELS - 1:
-            label_iter = 0
-        else:
-            label_iter += 1
+        label_iter = random.randint(0, NB_LABELS-1)
 
 def on_error(ws, error):
     print(error)
