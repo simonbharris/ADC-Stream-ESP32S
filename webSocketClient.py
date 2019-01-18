@@ -17,15 +17,18 @@ label_iter = 0
 sample_data = []
 
 # Number of frames before saving (~110ms per frame)
-INTERVAL = 20
+INTERVAL = 12
 
 CHANNELS = ['ch1', 'ch2']
 CH_DATA = {ch: [] for ch in CHANNELS}
 NB_CHANNELS = len(CH_DATA.keys())
 
-LABELS = ["OneFinger", "TwoFinger", "fourFinger"]
+#        |   Fireball      |    Shield    |      Bolt
+LABELS = ["5-Finger-Spread", "Tucked-Fist", "2-finger-Point"]
 LABEL_COUNT = {label:0 for label in LABELS}
 NB_LABELS = len(LABELS)
+
+INPUT_MULTIPLIER = 7.8125
 
 # Collects data from incoming message.
 def collectData(message):
@@ -36,7 +39,7 @@ def collectData(message):
     # x tracks which channel we are reading from.
     for i in range(0, len(message), NB_CHANNELS * 2):
         for x in range(NB_CHANNELS):                            # 'i'th set, 'x'th channel * LSB Microvolt value
-            CH_DATA['ch{}'.format(x + 1)].append(round(unpack("h", message[i+(x*2):i+(x*2)+2])[0] * 7.8125, 2))
+            CH_DATA['ch{}'.format(x + 1)].append(round(unpack("h", message[i+(x*2):i+(x*2)+2])[0] * INPUT_MULTIPLIER, 2))
 
 # What to do when we receive a frame.
 def on_message(ws, message):
@@ -49,6 +52,7 @@ def on_message(ws, message):
     label = LABELS[label_iter]
     # A new sample set starts at every INERVAL number of frames.
     if g_iter % INTERVAL == 0:
+        print("\u001b[3{}m".format(label_iter+1))
         print("Frame start: {} - {}  ".format(label, LABEL_COUNT[label]))
 	# We receive the data in binary, so we must unpack it. Specifying the array elementa [0] drops the tuple so it formats better.
     collectData(message)
