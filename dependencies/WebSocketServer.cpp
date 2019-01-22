@@ -1,559 +1,435 @@
-//#define DEBUGGING
-//#define SUPPORT_HIXIE_76
+/**************************************************************************/
+/*!
+    @file     Adafruit_ADS1015.cpp
+    @author   K.Townsend (Adafruit Industries)
+    @license  BSD (see license.txt)
 
-//MS:
+    Driver for the ADS1015/ADS1115 ADC
 
-#include "global.h"
-#include "WebSocketServer.h"
+    This is a library for the Adafruit MPL115A2 breakout
+    ----> https://www.adafruit.com/products/???
 
-#ifdef SUPPORT_HIXIE_76
-#include "MD5.c"
+    Adafruit invests time and resources providing this open source code,
+    please support Adafruit and open-source hardware by purchasing
+    products from Adafruit!
+
+    @section  HISTOR dY
+
+    v1.0 - First release
+*/
+/**************************************************************************/
+#if ARDUINO >= 100
+ #include "Arduino.h"
+#else
+ #include "WProgram.h"
 #endif
 
-#include "sha1.h"
-#include "Base64.h"
+#include <Wire.h>
 
+#include "Adafruit_ADS1015.h"
 
-bool WebSocketServer::handshake(Client &client) {
-    socket_client = &client;
-
-    // If there is a connected client->
-    if (socket_client->connected()) {
-        // Check request and look for websocket handshake
-#ifdef DEBUGGING
-            Serial.println(F("Client connected"));
-#endif
-        if (analyzeRequest(BUFFER_LENGTH)) {
-#ifdef DEBUGGING
-                Serial.println(F("Websocket established"));
-#endif
-
-                return true;
-
-        } else {
-            // Might just need to break until out of socket_client loop.
-#ifdef DEBUGGING
-            Serial.println(F("Disconnecting client"));
-#endif
-            terminateStream(0x87);
-
-            return false;
-        }
-    } else {
-        return false;
-    }
+/**************************************************************************/
+/*!
+    @brief  Abstract away platform differences in Arduino wire library
+*/
+/**************************************************************************/
+static uint8_t i2cread(void) {
+  #if ARDUINO >= 100
+  return Wire.read();
+  #else
+  return Wire.receive();
+  #endif
 }
 
-bool WebSocketServer::analyzeRequest(int bufferLength) {
-    // Use String library to do some sort of read() magic here.
-    String temp,tempLc;
-    int charpos;
-    int bite;
-    bool foundupgrade = false;
-#ifdef SUPPORT_HIXIE_76
-    String oldkey[2];
-    unsigned long intkey[2];
-#endif
-    String newkey;
-
-    hixie76style = false;
-    
-#ifdef DEBUGGING
-    Serial.println(F("Analyzing request headers"));
-#endif
-
-    for (int i = 0; i < 10 && !socket_client->available(); i++) {
-      delay(20);
-    }
-
-    // TODO: More robust string extraction
-    while ((bite = socket_client->read()) != -1) {
-
-        temp += (char)bite;
-
-        if ((char)bite == '\n') {
-            // Recieved CRNL without content, so header is done
-#ifndef SUPPORT_HIXIE_76
-            if (temp.charAt(0) == '\r') break;
-#endif
-#ifdef DEBUGGING
-            Serial.print("Got Line: " + temp);
-#endif
-            // Preserve mixed case vor values
-            tempLc = temp;
-            // Remove whitespaces and convert to lowercase to comply
-            // http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html
-            tempLc.toLowerCase();
-            while ((charpos = temp.indexOf(' ')) != -1) {
-                temp.remove(charpos,1);
-            }
-            if (!foundupgrade && tempLc.startsWith("upgrade:") && temp.indexOf("WebSocket") != -1) {
-                // OK, it's a websockets handshake for sure
-                foundupgrade = true;
-                hixie76style = true;
-            } else if (!foundupgrade && tempLc.startsWith("upgrade:") && temp.indexOf("websocket") != -1) {
-                foundupgrade = true;
-                hixie76style = false;
-            } else if (tempLc.startsWith("origin:")) {
-                origin = temp.substring(7,temp.length() - 2); // Don't save last CR+LF
-            } else
-#ifdef SUPPORT_HIXIE_76
-            if (tempLc.startsWith("host:")) {
-                host = temp.substring(5,temp.length() - 2); // Don't save last CR+LF
-            } else if (tempLcLc.startsWith("sec-websocket-key1:")) {
-                oldkey[0]=tempLc.substring(19,temp.length() - 2); // Don't save last CR+LF
-            } else if (temp.startsWith("sec-websocket-key2:")) {
-                oldkey[1]=tempLc.substring(19,temp.length() - 2); // Don't save last CR+LF
-            } else
-#endif
-            if (tempLc.startsWith("sec-websocket-key:")) {
-                newkey=temp.substring(18,temp.length() - 2); // Don't save last CR+LF
-            }
-            temp = "";        
-        }
-
-        if (!socket_client->available()) {
-          delay(20);
-        }
-    }
-
-    if (!socket_client->connected()) {
-        return false;
-    }
-
-    temp += 0; // Terminate string
-
-    // Assert that we have all headers that are needed. If so, go ahead and
-    // send response headers.
-    if (foundupgrade == true) {
-
-#ifdef SUPPORT_HIXIE_76
-        if (hixie76style && host.length() > 0 && oldkey[0].length() > 0 && oldkey[1].length() > 0) {
-            // All ok, proceed with challenge and MD5 digest
-            char key3[9] = {0};
-            // What now is in temp should be the third key
-            temp.toCharArray(key3, 9);
-
-            // Process keys
-            for (int i = 0; i <= 1; i++) {
-                unsigned int spaces =0;
-                String numbers;
-                
-                for (int c = 0; c < oldkey[i].length(); c++) {
-                    char ac = oldkey[i].charAt(c);
-                    if (ac >= '0' && ac <= '9') {
-                        numbers += ac;
-                    }
-                    if (ac == ' ') {
-                        spaces++;
-                    }
-                }
-                char numberschar[numbers.length() + 1];
-                numbers.toCharArray(numberschar, numbers.length()+1);
-                intkey[i] = strtoul(numberschar, NULL, 10) / spaces;        
-            }
-            
-            unsigned char challenge[16] = {0};
-            challenge[0] = (unsigned char) ((intkey[0] >> 24) & 0xFF);
-            challenge[1] = (unsigned char) ((intkey[0] >> 16) & 0xFF);
-            challenge[2] = (unsigned char) ((intkey[0] >>  8) & 0xFF);
-            challenge[3] = (unsigned char) ((intkey[0]      ) & 0xFF);    
-            challenge[4] = (unsigned char) ((intkey[1] >> 24) & 0xFF);
-            challenge[5] = (unsigned char) ((intkey[1] >> 16) & 0xFF);
-            challenge[6] = (unsigned char) ((intkey[1] >>  8) & 0xFF);
-            challenge[7] = (unsigned char) ((intkey[1]      ) & 0xFF);
-            
-            memcpy(challenge + 8, key3, 8);
-            
-            unsigned char md5Digest[16];
-            MD5(challenge, md5Digest, 16);
-            
-            socket_client->print(F("HTTP/1.1 101 Web Socket Protocol Handshake\r\n"));
-            socket_client->print(F("Upgrade: WebSocket\r\n"));
-            socket_client->print(F("Connection: Upgrade\r\n"));
-            socket_client->print(F("Sec-WebSocket-Origin: "));        
-            socket_client->print(origin);
-            socket_client->print(CRLF);
-            
-            // The "Host:" value should be used as location
-            socket_client->print(F("Sec-WebSocket-Location: ws://"));
-            socket_client->print(host);
-            socket_client->print(socket_urlPrefix);
-            socket_client->print(CRLF);
-            socket_client->print(CRLF);
-            
-            socket_client->write(md5Digest, 16);
-
-            return true;
-        }
-#endif
-
-        if (!hixie76style && newkey.length() > 0) {
-
-            // add the magic string
-            newkey += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
-            uint8_t *hash;
-            char result[21];
-            char b64Result[30];
-
-            SHA1Context sha;
-            int err;
-            uint8_t Message_Digest[20];
-            Serial.println("Calculating");
-            err = SHA1Reset(&sha);
-            err = SHA1Input(&sha, reinterpret_cast<const uint8_t *>(newkey.c_str()), newkey.length());
-            err = SHA1Result(&sha, Message_Digest);
-            hash = Message_Digest;
-
-            for (int i=0; i<20; ++i) {
-                result[i] = (char)hash[i];
-            }
-            result[20] = '\0';
-
-            base64_encode(b64Result, result, 20);
-            Serial.println("Sending");
-            char * response = (char*)malloc(200);
-            sprintf(response, "HTTP/1.1 101 Web Socket Protocol Handshake\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", b64Result);
-            socket_client->print(response);
-#ifdef DEBUGGING
-            Serial.print(response);
-#endif
-            free(response);
-            return true;
-        } else {
-            // something went horribly wrong
-            return false;
-        }
-    } else {
-        // Nope, failed handshake. Disconnect
-#ifdef DEBUGGING
-        Serial.println(F("Header mismatch"));
-#endif
-        return false;
-    }
+/**************************************************************************/
+/*!
+    @brief  Abstract away platform differences in Arduino wire library
+*/
+/**************************************************************************/
+static void i2cwrite(uint8_t x) {
+  #if ARDUINO >= 100
+  Wire.write((uint8_t)x);
+  #else
+  Wire.send(x);
+  #endif
 }
 
-#ifdef SUPPORT_HIXIE_76
-String WebSocketServer::handleHixie76Stream() {
-    int bite;
-    int frameLength = 0;
-    // String to hold bytes sent by client to server.
-    String socketString;
-
-    if (socket_client->connected() && socket_client->available()) {
-        bite = timedRead();
-
-        if (bite != -1) {
-            if (bite == 0)
-                continue; // Frame start, don't save
-
-            if ((uint8_t) bite == 0xFF) {
-                // Frame end. Process what we got.
-                return socketString;
-                
-            } else {
-                socketString += (char)bite;
-                frameLength++;            
-
-                if (frameLength > MAX_FRAME_LENGTH) {
-                    // Too big to handle!
-#ifdef DEBUGGING
-                    Serial.print("Client send frame exceeding ");
-                    Serial.print(MAX_FRAME_LENGTH);
-                    Serial.println(" bytes");
-#endif
-                    return;
-                }  
-            }           
-        }
-    }
-
-    return socketString;
+/**************************************************************************/
+/*!
+    @brief  Writes 16-bits to the specified destination register
+*/
+/**************************************************************************/
+static void writeRegister(uint8_t i2cAddress, uint8_t reg, uint16_t value) {
+  Wire.beginTransmission(i2cAddress);
+  i2cwrite((uint8_t)reg);
+  i2cwrite((uint8_t)(value>>8));
+  i2cwrite((uint8_t)(value & 0xFF));
+  Wire.endTransmission();
 }
 
-#endif
-
-String WebSocketServer::handleStream() {
-    uint8_t msgtype;
-    unsigned int length;
-    uint8_t mask[4];
-    unsigned int i;
-
-    // String to hold bytes sent by client to server.
-    String socketString;
-
-    if (socket_client->connected() && socket_client->available()) {
-        msgtype = timedRead();
-        if (msgtype == 0x88) {
-            disconnectStream();
-            return socketString;
-        }
-        if (!socket_client->connected()) {
-            return socketString;
-        }
-
-        length = timedRead() & 127;
-        if (!socket_client->connected()) {
-            return socketString;
-        }
-
-        if (length == 126) {
-            length = timedRead() << 8;
-            if (!socket_client->connected()) {
-                return socketString;
-            }
-            
-            length |= timedRead();
-            if (!socket_client->connected()) {
-                return socketString;
-            }   
-
-        } else if (length == 127) {
-#ifdef DEBUGGING
-            Serial.println(F("No support for over 16 bit sized messages"));
-#endif
-            terminateStream(0x89);
-            return socketString;
-        }
-
-        // get the mask
-        mask[0] = timedRead();
-        if (!socket_client->connected()) {
-            return socketString;
-        }
-
-        mask[1] = timedRead();
-        if (!socket_client->connected()) {
-
-            return socketString;
-        }
-
-        mask[2] = timedRead();
-        if (!socket_client->connected()) {
-            return socketString;
-        }
-
-        mask[3] = timedRead();
-        if (!socket_client->connected()) {
-            return socketString;
-        }
-
-        for (i=0; i<length; ++i) {
-            socketString += (char) (timedRead() ^ mask[i % 4]);
-            if (!socket_client->connected()) {
-                return socketString;
-            }
-        }
-        if (msgtype == 0x89) {
-            sendPong(socketString);
-        } else if (msgtype == 0x8A) {
-#ifdef DEBUGGING
-            Serial.println(F("Received pong"));
-#endif
-            return socketString;
-        }
-    }
-
-    return socketString;
+/**************************************************************************/
+/*!
+    @brief  Writes 16-bits to the specified destination register
+*/
+/**************************************************************************/
+static uint16_t readRegister(uint8_t i2cAddress, uint8_t reg) {
+  Wire.beginTransmission(i2cAddress);
+  i2cwrite(ADS1015_REG_POINTER_CONVERT);
+  Wire.endTransmission();
+  Wire.requestFrom(i2cAddress, (uint8_t)2);
+  return ((i2cread() << 8) | i2cread());  
 }
 
-void WebSocketServer::terminateStream(uint8_t cause) {
-#ifdef DEBUGGING
-    Serial.println(F("Terminating socket"));
-#endif
-
-    if (hixie76style) {
-#ifdef SUPPORT_HIXIE_76
-        // Should send 0xFF00 to server to tell it I'm quitting here.
-        socket_client->write((uint8_t) 0xFF);
-        socket_client->write((uint8_t) 0x00); 
-#endif       
-    } else {
-
-        // Should send termination sequence (87,88,89) to server to tell it I'm quitting here.
-        socket_client->write((uint8_t) cause);
-        socket_client->write((uint8_t) 0x00);
-    }   
-    
-    socket_client->flush();
-    delay(10);
-    socket_client->stop();
-}
-
-void WebSocketServer::disconnectStream() {
-#ifdef DEBUGGING
-    Serial.println(F("Disconnecting socket"));
-#endif
-
-    if (hixie76style) {
-#ifdef SUPPORT_HIXIE_76
-        // Should send 0xFF00 to server to tell it I'm quitting here.
-        socket_client->write((uint8_t) 0xFF);
-        socket_client->write((uint8_t) 0x00); 
-#endif       
-    } else {
-
-        // Should send 0x8800 to server to tell it I'm quitting here.
-        socket_client->write((uint8_t) 0x88);
-        socket_client->write((uint8_t) 0x00);
-    }   
-    
-    socket_client->flush();
-    delay(10);
-    socket_client->stop();
-}
-
-String WebSocketServer::getData() {
-    String data;
-
-    if (hixie76style) {
-#ifdef SUPPORT_HIXIE_76
-        data = handleHixie76Stream();
-#endif
-    } else {
-        data = handleStream();
-    }
-
-    return data;
-}
-
-void WebSocketServer::sendData(const char *str) {
-#ifdef DEBUGGING
-    Serial.print(F("Sending data: "));
-    Serial.println(str);
-#endif
-    if (socket_client->connected()) {
-        if (hixie76style) {
-            socket_client->write(0x00); // Frame start
-            socket_client->print(str);
-            socket_client->write(0xFF); // Frame end            
-        } else {
-            sendEncodedData(str, 0x81);
-        }         
-    }
-}
-
-void WebSocketServer::sendData(String str) {
-#ifdef DEBUGGING
-    Serial.print(F("Sending data: "));
-    Serial.println(str);
-#endif
-    if (socket_client->connected()) {
-        if (hixie76style) {
-            socket_client->write(0x00); // Frame start
-            socket_client->print(str);
-            socket_client->write(0xFF); // Frame end        
-        } else {
-            sendEncodedData(str, 0x81);
-        }
-    }
-}
-
-/* sharris custom function */
-// Intended ot send an array of longlongs over a websocket in binary form.
-void WebSocketServer::sendData(int16_t *arr, int n)
+/**************************************************************************/
+/*!
+    @brief  Instantiates a new ADS1015 class w/appropriate properties
+*/
+/**************************************************************************/
+Adafruit_ADS1015::Adafruit_ADS1015(uint8_t i2cAddress) 
 {
-    if(socket_client->connected()) {
-        sendEncodedData(arr, n, 0x82);
-    }
+   m_i2cAddress = i2cAddress;
+   m_conversionDelay = ADS1015_CONVERSIONDELAY;
+   m_bitShift = 4;
+   m_gain = GAIN_TWOTHIRDS; /* +/- 6.144V range (limited to VDD +0.3V max!) */
+   m_sampleRate = ADS1015_SPS1600; //1600 default
 }
 
-int WebSocketServer::timedRead() {
-  while (!socket_client->available()) {
-    delay(20);  
+/**************************************************************************/
+/*!
+    @brief  Instantiates a new ADS1115 class w/appropriate properties
+*/
+/**************************************************************************/
+Adafruit_ADS1115::Adafruit_ADS1115(uint8_t i2cAddress)
+{
+   m_i2cAddress = i2cAddress;
+   m_conversionDelay = ADS1115_CONVERSIONDELAY;
+   m_bitShift = 0;
+   m_gain = GAIN_TWOTHIRDS; /* +/- 6.144V range (limited to VDD +0.3V max!) */
+   m_sampleRate = ADS1115_SPS128; // Default 128 SPS
+}
+
+/**************************************************************************/
+/*!
+    @brief  Sets up the HW (reads coefficients values, etc.)
+*/
+/**************************************************************************/
+void Adafruit_ADS1015::begin() {
+  Wire.begin();
+}
+
+/**************************************************************************/
+/*!
+    @brief  Sets the gain and input voltage range
+*/
+/**************************************************************************/
+void Adafruit_ADS1015::setGain(adsGain_t gain)
+{
+  m_gain = gain;
+}
+
+/**************************************************************************/
+/*!
+    @brief  Gets a gain and input voltage range
+*/
+/**************************************************************************/
+adsGain_t Adafruit_ADS1015::getGain()
+{
+  return m_gain;
+}
+
+/**************************************************************************/
+/*!
+    @brief  Sets the sample rate
+*/
+/**************************************************************************/
+void Adafruit_ADS1015::setSampleRate(adsSPS_t sr)
+{
+  m_sampleRate = sr;
+}
+
+/**************************************************************************/
+/*!
+    @brief  Gets the set sample rate
+*/
+/**************************************************************************/
+adsSPS_t Adafruit_ADS1015::getSampleRate()
+{
+  return m_sampleRate;
+}
+
+/**************************************************************************/
+/*!
+    @brief  Gets a single-ended ADC reading from the specified channel
+*/
+/**************************************************************************/
+uint16_t Adafruit_ADS1015::readADC_SingleEnded(uint8_t channel) {
+  if (channel > 3)
+  {
+    return 0;
+  }
+  
+  // Start with default values
+  uint16_t config = ADS1015_REG_CONFIG_CQUE_NONE    | // Disable the comparator (default val)
+                    ADS1015_REG_CONFIG_CLAT_NONLAT  | // Non-latching (default val)
+                    ADS1015_REG_CONFIG_CPOL_ACTVLOW | // Alert/Rdy active low   (default val)
+                    ADS1015_REG_CONFIG_CMODE_TRAD   | // Traditional comparator (default val)
+                    m_sampleRate   | // 1600 samples per second (default)
+                    ADS1015_REG_CONFIG_MODE_SINGLE;   // Single-shot mode (default)
+
+  // Set PGA/voltage range
+  config |= m_gain;
+
+  // Set single-ended input channel
+  switch (channel)
+  {
+    case (0):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_0;
+      break;
+    case (1):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_1;
+      break;
+    case (2):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_2;
+      break;
+    case (3):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_3;
+      break;
   }
 
-  return socket_client->read();
+  // Set 'start single-conversion' bit
+  config |= ADS1015_REG_CONFIG_OS_SINGLE;
+
+  // Write config register to the ADC
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_CONFIG, config);
+
+  // Wait for the conversion to complete
+  delayMicroseconds(m_conversionDelay);
+
+  // Read the conversion results
+  // Shift 12-bit results right 4 bits for the ADS1015
+  return readRegister(m_i2cAddress, ADS1015_REG_POINTER_CONVERT) >> m_bitShift;  
 }
 
-void WebSocketServer::sendEncodedData(char *str, uint8_t opcode) {
-    int size = strlen(str);
+void Adafruit_ADS1015::setupContinuousADC_Differential_0_1() {
+  // Start with default values
+  uint16_t config = ADS1015_REG_CONFIG_CQUE_NONE    | // Disable the comparator (default val)
+                    ADS1015_REG_CONFIG_CLAT_NONLAT  | // Non-latching (default val)
+                    ADS1015_REG_CONFIG_CPOL_ACTVLOW | // Alert/Rdy active low   (default val)
+                    ADS1015_REG_CONFIG_CMODE_TRAD   | // Traditional comparator (default val)
+                    m_sampleRate   | // 1600 samples per second (default)
+                    ADS1015_REG_CONFIG_MODE_SINGLE;   // Single-shot mode (default)
 
-    // string type
-    socket_client->write(opcode);
+  // Set PGA/voltage range
+  config |= m_gain;
 
-    // NOTE: no support for > 16-bit sized messages
-    if (size > 125) {
-        socket_client->write(126);
-        socket_client->write((uint8_t) (size >> 8));
-        socket_client->write((uint8_t) (size & 0xFF));
-    } else {
-        socket_client->write((uint8_t) size);
-    }
+  // Set diff on pins 0 and 1
+  config |= ADS1015_REG_CONFIG_MUX_DIFF_0_1;
 
-    socket_client->print(str);
+  // Set 'start single-conversion' bit
+  config |= ADS1015_REG_CONFIG_OS_SINGLE;
+
+  // Write config register to the ADC
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_CONFIG, config);
 }
 
-void WebSocketServer::sendEncodedData(String str, uint8_t opcode) {
-    int size = str.length() + 1;
-    char cstr[size];
+void Adafruit_ADS1015::setupContinuousADC_Differential_2_3() {
+  // Start with default values
+  uint16_t config = ADS1015_REG_CONFIG_CQUE_NONE    | // Disable the comparator (default val)
+                    ADS1015_REG_CONFIG_CLAT_NONLAT  | // Non-latching (default val)
+                    ADS1015_REG_CONFIG_CPOL_ACTVLOW | // Alert/Rdy active low   (default val)
+                    ADS1015_REG_CONFIG_CMODE_TRAD   | // Traditional comparator (default val)
+                    m_sampleRate   | // 1600 samples per second (default)
+                    ADS1015_REG_CONFIG_MODE_SINGLE;   // Single-shot mode (default)
 
-    str.toCharArray(cstr, size);
+  // Set PGA/voltage range
+  config |= m_gain;
 
-    sendEncodedData(cstr, opcode);
+  // Set diff on pins 0 and 1
+  config |= ADS1015_REG_CONFIG_MUX_DIFF_2_3;
+
+  // Set 'start single-conversion' bit
+  config |= ADS1015_REG_CONFIG_OS_SINGLE;
+
+  // Write config register to the ADC
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_CONFIG, config);
 }
 
-/* sharris custom function */
-/*
-    Intended to send a longlong array of data over a websocket to a client.
+
+/**************************************************************************/
+/*! 
+    @brief  Reads the conversion results, measuring the voltage
+            difference between the P (AIN0) and N (AIN1) input.  Generates
+            a signed value since the difference can be either
+            positive or negative.
 */
-void WebSocketServer::sendEncodedData(int16_t *arr, int n, uint8_t opcode)
-{
-    int size = n * sizeof(int16_t);
-    unsigned char *bytearr = (unsigned char *)arr;
+/**************************************************************************/
+int16_t Adafruit_ADS1015::readADC_Differential_0_1() {
+  // Start with default values
+  uint16_t config = ADS1015_REG_CONFIG_CQUE_NONE    | // Disable the comparator (default val)
+                    ADS1015_REG_CONFIG_CLAT_NONLAT  | // Non-latching (default val)
+                    ADS1015_REG_CONFIG_CPOL_ACTVLOW | // Alert/Rdy active low   (default val)
+                    ADS1015_REG_CONFIG_CMODE_TRAD   | // Traditional comparator (default val)
+                    m_sampleRate    | // 1600 samples per second (default)
+                    ADS1015_REG_CONFIG_MODE_SINGLE;   // Single-shot mode (default)
 
-    // Send in 1 frame, binary
-    socket_client->write(opcode);
+  // Set PGA/voltage range
+  config |= m_gain;
+                    
+  // Set channels
+  config |= ADS1015_REG_CONFIG_MUX_DIFF_0_1;          // AIN0 = P, AIN1 = N
 
-    if (size > 125) {
-        socket_client->write((126));
-        socket_client->write((uint8_t) (size >> 8));
-        socket_client->write((uint8_t) (size & 0xff));
-    } else {
-        socket_client->write((uint8_t) size);
-    }
-    socket_client->write((uint8_t *)arr, size);
-}
+  // Set 'start single-conversion' bit
+  config |= ADS1015_REG_CONFIG_OS_SINGLE;
 
-void WebSocketServer::sendPing(String str) {
-    sendEncodedData(str, 0x89);
-}
-void WebSocketServer::sendPing(const char *str) {
-    sendEncodedData(str, 0x89);
-}
+  // Write config register to the ADC
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_CONFIG, config);
 
-void WebSocketServer::sendPong(String str) {
-    sendEncodedData(str, 0x8A);
-}
-void WebSocketServer::sendPong(const char *str) {
-    sendEncodedData(str, 0x8A);
-}
+  // Wait for the conversion to complete
+  delayMicroseconds(m_conversionDelay);
 
-// Sharris custom function.
-void WebSocketServer::send4channel(int16_t a, int16_t b, int16_t c, int16_t d)
-{
-    if (socket_client->connected())
+  // Read the conversion results
+  uint16_t res = readRegister(m_i2cAddress, ADS1015_REG_POINTER_CONVERT) >> m_bitShift;
+  if (m_bitShift == 0)
+  {
+    return (int16_t)res;
+  }
+  else
+  {
+    // Shift 12-bit results right 4 bits for the ADS1015,
+    // making sure we keep the sign bit intact
+    if (res > 0x07FF)
     {
-        int size = 8;
-
-        uint8_t byte[8];
-        
-        byte[0] = (a >> 8) & 0xFF;
-        byte[1] = a & 0xFF;
-        byte[2] = (b >> 8) & 0xFF;
-        byte[3] = b & 0xFF;
-        byte[4] = (c >> 8) & 0xFF;
-        byte[5] = c & 0xFF;
-        byte[6] = (d >> 8) & 0xFF;
-        byte[7] = d & 0xFF;
-        
-        // Sending data in frame, declared single frame in binary.
-        socket_client->write(0x82);
-        // Size of message in bytes
-        socket_client->write(8);
-        // binary data
-        socket_client->write(byte, 8);
+      // negative number - extend the sign to 16th bit
+      res |= 0xF000;
     }
+    return (int16_t)res;
+  }
+}
+
+/**************************************************************************/
+/*! 
+    @brief  Reads the conversion results, measuring the voltage
+            difference between the P (AIN2) and N (AIN3) input.  Generates
+            a signed value since the difference can be either
+            positive or negative.
+*/
+/**************************************************************************/
+int16_t Adafruit_ADS1015::readADC_Differential_2_3() {
+  // Start with default values
+  uint16_t config = ADS1015_REG_CONFIG_CQUE_NONE    | // Disable the comparator (default val)
+                    ADS1015_REG_CONFIG_CLAT_NONLAT  | // Non-latching (default val)
+                    ADS1015_REG_CONFIG_CPOL_ACTVLOW | // Alert/Rdy active low   (default val)
+                    ADS1015_REG_CONFIG_CMODE_TRAD   | // Traditional comparator (default val)
+                    m_sampleRate   | // 1600 samples per second (default)
+                    ADS1015_REG_CONFIG_MODE_SINGLE;   // Single-shot mode (default)
+
+  // Set PGA/voltage range
+  config |= m_gain;
+
+  // Set channels
+  config |= ADS1015_REG_CONFIG_MUX_DIFF_2_3;          // AIN2 = P, AIN3 = N
+
+  // Set 'start single-conversion' bit
+  config |= ADS1015_REG_CONFIG_OS_SINGLE;
+
+  // Write config register to the ADC
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_CONFIG, config);
+
+  // Wait for the conversion to complete
+  delayMicroseconds(m_conversionDelay);
+
+  // Read the conversion results
+  uint16_t res = readRegister(m_i2cAddress, ADS1015_REG_POINTER_CONVERT) >> m_bitShift;
+  if (m_bitShift == 0)
+  {
+    return (int16_t)res;
+  }
+  else
+  {
+    // Shift 12-bit results right 4 bits for the ADS1015,
+    // making sure we keep the sign bit intact
+    if (res > 0x07FF)
+    {
+      // negative number - extend the sign to 16th bit
+      res |= 0xF000;
+    }
+    return (int16_t)res;
+  }
+}
+
+/**************************************************************************/
+/*!
+    @brief  Sets up the comparator to operate in basic mode, causing the
+            ALERT/RDY pin to assert (go from high to low) when the ADC
+            value exceeds the specified threshold.
+
+            This will also set the ADC in continuous conversion mode.
+*/
+/**************************************************************************/
+void Adafruit_ADS1015::startComparator_SingleEnded(uint8_t channel, int16_t threshold)
+{
+  // Start with default values
+  uint16_t config = ADS1015_REG_CONFIG_CQUE_1CONV   | // Comparator enabled and asserts on 1 match
+                    ADS1015_REG_CONFIG_CLAT_LATCH   | // Latching mode
+                    ADS1015_REG_CONFIG_CPOL_ACTVLOW | // Alert/Rdy active low   (default val)
+                    ADS1015_REG_CONFIG_CMODE_TRAD   | // Traditional comparator (default val)
+                    m_sampleRate   | // 1600 samples per second (default)
+                    ADS1015_REG_CONFIG_MODE_CONTIN  | // Continuous conversion mode
+                    ADS1015_REG_CONFIG_MODE_CONTIN;   // Continuous conversion mode
+
+  // Set PGA/voltage range
+  config |= m_gain;
+                    
+  // Set single-ended input channel
+  switch (channel)
+  {
+    case (0):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_0;
+      break;
+    case (1):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_1;
+      break;
+    case (2):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_2;
+      break;
+    case (3):
+      config |= ADS1015_REG_CONFIG_MUX_SINGLE_3;
+      break;
+  }
+
+  // Set the high threshold register
+  // Shift 12-bit results left 4 bits for the ADS1015
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_HITHRESH, threshold << m_bitShift);
+
+  // Write config register to the ADC
+  writeRegister(m_i2cAddress, ADS1015_REG_POINTER_CONFIG, config);
+}
+
+/**************************************************************************/
+/*!
+    @brief  In order to clear the comparator, we need to read the
+            conversion results.  This function reads the last conversion
+            results without changing the config value.
+*/
+/**************************************************************************/
+int16_t Adafruit_ADS1015::getLastConversionResults()
+{
+  // Read the conversion results
+  uint16_t res = readRegister(m_i2cAddress, ADS1015_REG_POINTER_CONVERT) >> m_bitShift;
+  if (m_bitShift == 0)
+  {
+    return (int16_t)res;
+  }
+  else
+  {
+    // Shift 12-bit results right 4 bits for the ADS1015,
+    // making sure we keep the sign bit intact
+    if (res > 0x07FF)
+    {
+      // negative number - extend the sign to 16th bit
+      res |= 0xF000;
+    }
+    return (int16_t)res;
+  }
 }
 

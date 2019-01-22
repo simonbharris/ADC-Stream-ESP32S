@@ -15,11 +15,12 @@ g_iter = 0
 file_iter = 0
 label_iter = 0
 sample_data = []
+setNo = 0
 
 # Number of frames before saving (~110ms per frame)
 INTERVAL = 12
 
-CHANNELS = ['ch1', 'ch2']
+CHANNELS = ['ch1', 'ch2', "ch3", "ch4", "ch5", "ch6", "ch7", "ch8"]
 CH_DATA = {ch: [] for ch in CHANNELS}
 NB_CHANNELS = len(CH_DATA.keys())
 
@@ -28,7 +29,7 @@ LABELS = ["5-Finger-Spread", "Tucked-Fist", "2-finger-Point"]
 LABEL_COUNT = {label:0 for label in LABELS}
 NB_LABELS = len(LABELS)
 
-INPUT_MULTIPLIER = 7.8125
+INPUT_MULTIPLIER = 1 #//7.8125
 
 # Collects data from incoming message.
 def collectData(message):
@@ -61,7 +62,7 @@ def on_message(ws, message):
     # At every INTERVAL number of frames, save to file.
     if g_iter % INTERVAL == 0:
         df = pd.DataFrame(CH_DATA)
-        df.to_csv("data/{}/{}.txt".format(label, str(LABEL_COUNT[label])), ",")
+        df.to_csv("data/{}/{}{}.txt".format(label, setNo, str(LABEL_COUNT[label])), ",")
         CH_DATA = {ch: [] for ch in CHANNELS}
         print("Produced csv no: {} lable: {}".format(file_iter + 1, label))
         LABEL_COUNT[label] += 1
@@ -87,25 +88,16 @@ def on_open(ws):
 if __name__ == "__main__":
     websocket.enableTrace(True)
     # ESP32 server is hosted on 192.168.4.1:80 when connected to it's access point.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--setNo",
+                        default="0", 
+                        help="append setNo to filenames")
+    args = parser.parse_args()
+
+    setNo = args.setNo
     ws = websocket.WebSocketApp("ws://192.168.4.1:80",
                               on_message = on_message,
                               on_error = on_error,
                               on_close = on_close)
     ws.on_open = on_open
     ws.run_forever()
-
-# Brainstorming --- Pseudocode
-# Every INTERVAL frames, switch labels.
-# Every INTERVAL frames, print a new file.
-# Every INTERVAL*2 frames, increment file iterator.
-
-# Pseudo
-# receive data
-# When INTERVAL frames have been collected
-#   Write to file
-#   Clear gathered data
-
-# Increment label_iter
-# When label_iter == label_Count - 1 have been collected
-#    set label_iter to 0
-#    icnrement file iter

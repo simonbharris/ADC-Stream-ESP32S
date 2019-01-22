@@ -35,8 +35,8 @@
 /*=========================================================================
     CONVERSION DELAY (in microseconds)
     -----------------------------------------------------------------------*/
-    #define ADS1015_CONVERSIONDELAY         (1)
-    #define ADS1115_CONVERSIONDELAY         (920)
+    #define ADS1015_CONVERSIONDELAY         (305)
+    #define ADS1115_CONVERSIONDELAY         (968)
 /*=========================================================================*/
 
 /*=========================================================================
@@ -128,6 +128,9 @@ typedef enum
   GAIN_SIXTEEN      = ADS1015_REG_CONFIG_PGA_0_256V
 } adsGain_t;
 
+// If the sample rate is set to a lower value
+// We need ot change the conversion delay in the header.
+// Ideally, I should make a function that calucates this and does it
 typedef enum
 {
   ADS1015_SPS128    = ADS1015_REG_CONFIG_DR_128SPS,
@@ -153,7 +156,7 @@ class Adafruit_ADS1015
 protected:
    // Instance-specific properties
    uint8_t   m_i2cAddress;
-   uint16_t   m_conversionDelay;
+   uint16_t  m_conversionDelay;
    uint8_t   m_bitShift;
    adsSPS_t  m_sampleRate;
    adsGain_t m_gain;
@@ -168,11 +171,11 @@ protected:
   int16_t   getLastConversionResults();
   void      setGain(adsGain_t gain);
   adsGain_t getGain(void);
-  void      setSampleRate(adsSPS_t sampleRate);
+  void      setSampleRate(adsSPS_t sr);
   adsSPS_t  getSampleRate();
-  void  setupContinuous_SingleEnded(uint8_t channel);
-int16_t setupContinuousADC_Differential_0_1();
-
+  void      setupContinuous_SingleEnded(uint8_t channel);
+  void      setupContinuousADC_Differential_0_1();
+  void      setupContinuousADC_Differential_2_3();
  private:
 };
 
