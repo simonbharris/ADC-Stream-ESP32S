@@ -1,15 +1,6 @@
-/*
-**All obervations here are on Serial only, no WiFi
-*
-*Intestingly, ADDR->SDA first seems to reduce the static of this ADS1115 chip.
-*Otherwise it's quite a noticable difference. All signals seem to float between -4 and +15, with some noise reaching a bit further.
-*            
-*                        | n: sps (channels = n*2) @1000 delay
-*            ADDR to SDA | 1: 400 | delay @950 is too fast
-*            ADDR to VDD | 2: 335
-*            ADDR to SCL | 3: 287
-*            ADDR to GND | 4: 252 | delay @720 works for 293sps
-*/
+#include "esp8266semg.h"
+
+// Check very bottom for notes on observed performance
 
 // Sets all ads1115 devices to read
 // Select:
@@ -56,3 +47,18 @@ void get_values(int16_t val[4])
   #endif
 }
 
+/*
+* All obervations here are on Serial only, no WiFi
+*
+* Intestingly, ADDR->SDA first seems to reduce the static of this ADS1115 chip.
+* Otherwise it's quite a noticable difference. All signals seem to float between -4 and +15, with some noise reaching a bit further.
+*            
+*     Using i2c Fast Mode (400kbit)
+*                        | n: sps (channels = n*2) @1000 delay
+*            ADDR to SDA | 1: 400 | delay @950 is too fast
+*            ADDR to VDD | 2: 335
+*            ADDR to SCL | 3: 287
+*            ADDR to GND | 4: 252 | delay @720 works for 293sps
+*
+*    WiFi enabled, I am able to acquire about 285sps on 4 devices, 8 total channels.
+*/
