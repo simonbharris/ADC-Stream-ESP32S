@@ -9,4 +9,4 @@ The included dependencies contain library(ies) that have been modified to suit m
   - Now delays by microseconds, controlled by a macro in the header file
   - Contains enums for SPS rates of both 1115 and 1015 devices
   - Added functionality to write to the ADS chips without without a delay or a read.
-  --  Used properly, this can help promote asynchronous functionality.
+  - - Used properly, this can help promote asynchronous functionality.
