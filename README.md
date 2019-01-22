@@ -1,5 +1,5 @@
 # ADC-Stream-ESP32S
-Using a NodeMCU ESP32S board to stream data received by an ADS1115. Intent is to detect sEMG readings to identify hand gestures.
+Using a NodeMCU ESP32S board to stream data received by an ADS1115. The intent is to collect data to detect sEMG readings and label them to hand gestures.
 
 # Dependencies
 The included dependencies contain library(ies) that have been modified to suit my needs. These are not the same as the original repositories. An overview of the changes are listed here
