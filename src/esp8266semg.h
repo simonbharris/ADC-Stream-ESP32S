@@ -6,7 +6,7 @@
 #include <Adafruit_ADS1015.h>
 
 // !!! DEBUG OPTIONS: Use up to one
-//#define DEBUG_PRINT // prints values from channels to serial
+//#define DEBUG_PRINT // prints values from channels to serial (Intestingly, only ~1sps drop enabled.)
 //#define DEBUG_SPS // prints sps to Serial
 
 #define USE_SERIAL Serial

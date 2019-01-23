@@ -1,0 +1,6 @@
+Time taken to receive each frame for 35 frames (in seconds)
+Mean: 3.8
+Low: 2.4
+High: 7.0
+
+Each frame should only take ~2.4 seconds (12 200ms packets)
