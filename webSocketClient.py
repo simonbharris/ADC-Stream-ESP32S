@@ -13,6 +13,7 @@ import time
 # globals ########################
 g_iter = 0
 file_iter = 0
+timer = 0
 label_iter = 0
 sample_data = []
 setNo = 0
@@ -49,12 +50,14 @@ def on_message(ws, message):
     global LABEL_COUNT
     global CH_DATA
     global file_iter
+    global timer
 
     label = LABELS[label_iter]
     # A new sample set starts at every INERVAL number of frames.
     if g_iter % INTERVAL == 0:
         print("\u001b[3{}m".format(label_iter+1))
         print("Frame start: {} - {}  ".format(label, LABEL_COUNT[label]))
+        timer = time.time()
 	# We receive the data in binary, so we must unpack it. Specifying the array elementa [0] drops the tuple so it formats better.
     collectData(message)
     g_iter += 1
@@ -68,6 +71,7 @@ def on_message(ws, message):
         LABEL_COUNT[label] += 1
         file_iter += 1
         label_iter = random.randint(0, NB_LABELS-1)
+        print(round(time.time() - timer, 5))
 
 def on_error(ws, error):
     print(error)
